@@ -1,174 +1,98 @@
-<!DOCTYPE html>
-<html lang="ar" dir="rtl">
-<head>
-  <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>ORALE 4.0</title>
-  <style>
-    * { box-sizing: border-box; }
-    body {
-      margin: 0;
-      font-family: Arial, sans-serif;
-      background: #07111f;
-      color: white;
-      min-height: 100vh;
-      display: flex;
-      flex-direction: column;
-    }
-    header {
-      padding: 20px;
-      text-align: center;
-      background: #0d1b2d;
-      border-bottom: 1px solid #193653;
-    }
-    header h1 {
-      margin: 0;
-      color: #38bdf8;
-      letter-spacing: 2px;
-    }
-    header p { color: #a9bfd4; margin-bottom: 0; }
-    #chat {
-      width: min(850px, 100%);
-      margin: auto;
-      padding: 20px;
-      flex: 1;
-      overflow-y: auto;
-    }
-    .message {
-      padding: 14px 17px;
-      margin: 12px 0;
-      border-radius: 15px;
-      max-width: 85%;
-      line-height: 1.7;
-      white-space: pre-wrap;
-      overflow-wrap: anywhere;
-    }
-    .user {
-      background: #075985;
-      margin-right: auto;
-    }
-    .bot {
-      background: #17283c;
-      margin-left: auto;
-    }
-    #status {
-      text-align: center;
-      color: #9bb5ca;
-      min-height: 24px;
-      padding: 5px;
-    }
-    .input-area {
-      background: #0d1b2d;
-      padding: 15px;
-      display: flex;
-      gap: 10px;
-      justify-content: center;
-      border-top: 1px solid #193653;
-    }
-    input {
-      width: min(650px, 75%);
-      padding: 15px;
-      border-radius: 12px;
-      border: 1px solid #31516e;
-      background: #07111f;
-      color: white;
-      font-size: 16px;
-      outline: none;
-    }
-    button {
-      padding: 12px 20px;
-      border: none;
-      border-radius: 12px;
-      background: #0284c7;
-      color: white;
-      font-size: 16px;
-      cursor: pointer;
-    }
-    button:hover { background: #0369a1; }
-    button:disabled { opacity: .5; cursor: not-allowed; }
-    footer {
-      text-align: center;
-      padding: 12px;
-      color: #7893aa;
-      font-size: 12px;
-    }
-  </style>
-</head>
-<body>
 
-<header>
-  <h1>ORALE 4.0</h1>
-  <p>مساعدك الذكي — اسأل وسنحاول مساعدتك</p>
-</header>
+export default async function handler(req, res) {
+  res.setHeader("Content-Type", "application/json; charset=utf-8");
 
-<main id="chat">
-  <div class="message bot">
-    مرحبًا بك في ORALE 4.0! 👋
-    كيف يمكنني مساعدتك اليوم؟
-  </div>
-</main>
-
-<div id="status"></div>
-
-<div class="input-area">
-  <input id="userInput" type="text"
-         placeholder="اكتب رسالتك هنا..."
-         autocomplete="off">
-  <button id="sendBtn" onclick="sendMessage()">إرسال</button>
-</div>
-
-<footer>ORALE 4.0 — Your Goals. Your Focus. Your Future.</footer>
-
-<script>
-  const chat = document.getElementById("chat");
-  const input = document.getElementById("userInput");
-  const statusText = document.getElementById("status");
-  const sendBtn = document.getElementById("sendBtn");
-
-  function addMessage(text, type) {
-    const message = document.createElement("div");
-    message.className = "message " + type;
-    message.textContent = text;
-    chat.appendChild(message);
-    chat.scrollTop = chat.scrollHeight;
+  if (req.method !== "POST") {
+    res.setHeader("Allow", "POST");
+    return res.status(405).json({ error: "طريقة الطلب غير مدعومة." });
   }
 
-  async function sendMessage() {
-    const text = input.value.trim();
-    if (!text || sendBtn.disabled) return;
+  const apiKey = process.env.GEMINI_API_KEY;
 
-    addMessage(text, "user");
-    input.value = "";
-    sendBtn.disabled = true;
-    statusText.textContent = "ORALE يفكر...";
+  if (!apiKey) {
+    return res.status(500).json({
+      error: "مفتاح Gemini غير موجود في إعدادات Vercel."
+    });
+  }
 
-    try {
-      const response = await fetch("/api/chat", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ message: text })
+  try {
+    const history = req.body?.history;
+
+    if (!Array.isArray(history) || history.length === 0) {
+      return res.status(400).json({
+        error: "أرسل رسالة أولاً."
       });
-
-      const data = await response.json();
-
-      if (!response.ok) {
-        throw new Error(data.error || "حدث خطأ في الخادم.");
-      }
-
-      addMessage(data.reply || "لم يصل رد من المساعد.", "bot");
-    } catch (error) {
-      addMessage("تعذر الاتصال بالخادم. سنتحقق من الإعدادات في الخطوة القادمة.", "bot");
-    } finally {
-      statusText.textContent = "";
-      sendBtn.disabled = false;
-      input.focus();
     }
+
+    const contents = history
+      .slice(-20)
+      .map((item) => {
+        const role = item.role === "model" ? "model" : "user";
+        const message = String(item.text || "").trim().slice(0, 8000);
+
+        return {
+          role,
+          parts: [{ text: message }]
+        };
+      })
+      .filter((item) => item.parts[0].text.length > 0);
+
+    if (
+      contents.length === 0 ||
+      contents[contents.length - 1].role !== "user"
+    ) {
+      return res.status(400).json({
+        error: "آخر رسالة يجب أن تكون رسالة المستخدم."
+      });
+    }
+
+    const geminiResponse = await fetch(
+      "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent",
+      {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "x-goog-api-key": apiKey
+        },
+        body: JSON.stringify({
+          contents,
+          generationConfig: {
+            temperature: 0.7,
+            maxOutputTokens: 1200
+          }
+        })
+      }
+    );
+
+    const data = await geminiResponse.json();
+
+    if (!geminiResponse.ok) {
+      console.error("Gemini API error:", data.error?.message);
+
+      return res.status(502).json({
+        error: data.error?.message || "حدث خطأ أثناء الاتصال بـ Gemini."
+      });
+    }
+
+    const reply = data.candidates?.[0]?.content?.parts
+      ?.map((part) => part.text || "")
+      .join("")
+      .trim();
+
+    if (!reply) {
+      return res.status(502).json({
+        error: "لم تصل إجابة من Gemini. حاول مجددًا."
+      });
+    }
+
+    return res.status(200).json({ reply });
+
+  } catch (error) {
+    console.error("ORALE server error:", error);
+
+    return res.status(500).json({
+      error: "حدث خطأ داخلي في الخادم."
+    });
   }
+}
 
-  input.addEventListener("keydown", function(event) {
-    if (event.key === "Enter") sendMessage();
-  });
-</script>
-
-</body>
-</html>
